@@ -1,173 +1,358 @@
-using System; using System.Windows.Forms; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading;
+using System;
+using System.Windows.Forms;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.IO;
 
 namespace LineageHelper
 {
     static class Program
     {
         [STAThread]
-        static void Main() { Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new MainForm()); }
+        static void Main() 
+        { 
+            Application.EnableVisualStyles(); 
+            Application.SetCompatibleTextRenderingDefault(false); 
+            Application.Run(new MainForm()); 
+        }
     }
 
     public class MainForm : Form
     {
-        // API - 就像原始碼
-        [DllImport("user32.dll", SetLastError = true)]
+        // ==================== 記憶體 API ====================
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int nSize, out int lpNumberOfBytesRead);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int nSize, out int lpNumberOfBytesWritten);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll")]
+        static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+        [DllImport("kernel32.dll")]
+        static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint dwFreeType);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+        static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, out int lpThreadId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetExitCodeThread(IntPtr hThread, out int lpExitCode);
+
+        // ==================== 視窗 API ====================
+        [DllImport("user32.dll")]
         static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-        
-        [DllImport("user32.dll", SetLastError = true)]
+
+        [DllImport("user32.dll")]
+        static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+
+        [DllImport("user32.dll")]
         static extern bool SetForegroundWindow(IntPtr hWnd);
-        
-        [DllImport("user32.dll", SetLastError = true)]
-        static extern IntPtr GetForegroundWindow();
-        
-        [DllImport("user32.dll", SetLastError = true)]
-        static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
-        
-        [DllImport("user32.dll", SetLastError = true)]
-        static extern IntPtr PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
-        
-        // 視窗訊息
-        const int WM_LBUTTONDOWN = 0x0201;
-        const int WM_LBUTTONUP = 0x0202;
-        const int WM_MOUSEMOVE = 0x0200;
-        
-        IntPtr hwnd;
+
+        // ==================== 常數 ====================
+        const uint PROCESS_ALL_ACCESS = 0x1F0FFF;
+        const uint PROCESS_VM_READ = 0x0010;
+        const uint PROCESS_VM_WRITE = 0x0020;
+        const uint PROCESS_VM_OPERATION = 0x0008;
+        const uint PROCESS_CREATE_THREAD = 0x0002;
+
+        const uint MEM_COMMIT = 0x1000;
+        const uint MEM_RESERVE = 0x2000;
+        const uint PAGE_READWRITE = 0x04;
+
+        const uint INFINITE = 0xFFFFFFFF;
+        const int STILL_ACTIVE = 0x00000103;
+
+        // ==================== 偏移量 (需要研究) ====================
+        // 這些是範例偏移量，需要實際研究
+        public static int[][] Offsets = new int[][]
+        {
+            new int[] { 0x12345678 }, // HP
+            new int[] { 0x1234567C }, // MP
+            new int[] { 0x12345680 }, // X座標
+            new int[] { 0x12345684 }, // Y座標
+            new int[] { 0x12345688 }, // 等級
+        };
+
+        // ==================== 變數 ====================
+        IntPtr hProcess = IntPtr.Zero;
+        int processId;
+        bool isAttached = false;
+        bool botRunning = false;
         
         TextBox txtLog;
-        Label lbl;
-        Button btnDetect, btnStart;
+        Label lblStatus;
+        Button btnAttach, btnStart, btnStop;
         
         public MainForm()
         {
-            Text = "天堂輔助 v3.1 - SendMessage";
-            Size = new System.Drawing.Size(400, 400);
+            Text = "天堂輔助 v3.5 - 記憶體控制版";
+            Size = new System.Drawing.Size(450, 450);
             StartPosition = FormStartPosition.CenterScreen;
             
-            lbl = new Label { Text = "狀態: 等待偵測", Left = 15, Top = 15, Width = 360 };
+            // 狀態
+            lblStatus = new Label { Text = "狀態: 未連接", Left = 15, Top = 15, Width = 400, ForeColor = System.Drawing.Color.Red };
             
-            btnDetect = new Button { Text = "1. 偵測視窗", Left = 15, Top = 45, Width = 120, Height = 35 };
-            btnDetect.Click += (s,e) => Detect();
+            // 按鈕
+            btnAttach = new Button { Text = "1. 附加到遊戲", Left = 15, Top = 45, Width = 130, Height = 35 };
+            btnAttach.Click += BtnAttach_Click;
             
-            // 測試按鈕
-            var btn1 = new Button { Text = "測試點擊(400,300)", Left = 15, Top = 90, Width = 170, Height = 30 };
-            btn1.Click += (s,e) => TestClick(400, 300);
+            btnStart = new Button { Text = "2. 讀取記憶體", Left = 155, Top = 45, Width = 130, Height = 35, Enabled = false };
+            btnStart.Click += BtnStart_Click;
             
-            var btn2 = new Button { Text = "測試點擊(200,300)", Left = 195, Top = 90, Width = 170, Height = 30 };
-            btn2.Click += (s,e) => TestClick(200, 300);
-            
-            var btn3 = new Button { Text = "測試點擊(600,300)", Left = 15, Top = 125, Width = 170, Height = 30 };
-            btn3.Click += (s,e) => TestClick(600, 300);
-            
-            var btn4 = new Button { Text = "測試點擊(400,200)", Left = 195, Top = 125, Width = 170, Height = 30 };
-            btn4.Click += (s,e) => TestClick(400, 200);
+            btnStop = new Button { Text = "停止", Left = 295, Top = 45, Width = 100, Height = 35 };
+            btnStop.Click += (s,e) => { botRunning = false; lblStatus.Text = "已停止"; };
             
             // 說明
-            var info = new Label { 
-                Text = "說明:\n1. 確保天堂遊戲正在運行\n2. 點擊[偵測視窗]\n3. 點擊[測試點擊]按鈕\n4. 觀察遊戲內是否有反應\n5. 告訴我哪裡有反應", 
-                Left = 15, Top = 170, Width = 360, Height = 80, ForeColor = System.Drawing.Color.Gray 
+            var info = new Label 
+            { 
+                Text = "功能說明:\n" +
+                       "• 附加到遊戲程序\n" +
+                       "• 讀取遊戲記憶體數據\n" +
+                       "• (偏移量需要研究)", 
+                Left = 15, Top = 90, Width = 400, Height = 60,
+                ForeColor = System.Drawing.Color.Gray 
             };
             
-            txtLog = new TextBox { Left = 15, Top = 260, Width = 360, Height = 100, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
+            // 偏移量設定
+            var grpOffset = new GroupBox { Text = "記憶體偏移量設定", Left = 15, Top = 155, Width = 400, Height = 120 };
+            
+            var lbl1 = new Label { Text = "HP偏移:", Left = 10, Top = 25 };
+            var txtHP = new TextBox { Left = 70, Top = 22, Width = 100, Text = "0x00A8B7C4" };
+            
+            var lbl2 = new Label { Text = "MP偏移:", Left = 180, Top = 25 };
+            var txtMP = new TextBox { Left = 240, Top = 22, Width = 100, Text = "0x00A8B7C8" };
+            
+            var lbl3 = new Label { Text = "X座標:", Left = 10, Top = 55 };
+            var txtX = new TextBox { Left = 70, Top = 52, Width = 100, Text = "0x00A8B7D0" };
+            
+            var lbl4 = new Label { Text = "Y座標:", Left = 180, Top = 55 };
+            var txtY = new TextBox { Left = 240, Top = 52, Width = 100, Text = "0x00A8B7D4" };
+            
+            var btnRead = new Button { Text = "讀取數據", Left = 150, Top = 80, Width = 100 };
+            btnRead.Click += (s,e) => { ReadMemory(txtHP, txtMP, txtX, txtY); };
+            
+            grpOffset.Controls.AddRange(new Control[] { lbl1, txtHP, lbl2, txtMP, lbl3, txtX, lbl4, txtY, btnRead });
+            
+            // 日誌
+            var lblLog = new Label { Text = "日誌:", Left = 15, Top = 285 };
+            txtLog = new TextBox { Left = 15, Top = 305, Width = 400, Height = 100, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
             txtLog.Font = new System.Drawing.Font("Consolas", 9);
             
-            Controls.AddRange(new Control[]{lbl, btnDetect, btn1, btn2, btn3, btn4, info, txtLog});
+            Controls.AddRange(new Control[] { lblStatus, btnAttach, btnStart, btnStop, info, grpOffset, lblLog, txtLog });
             
-            Log("=== 天堂輔助 v3.1 ===");
-            Log("使用 SendMessage 方式");
+            Log("=== 天堂輔助 v3.5 ===");
+            Log("記憶體控制版");
         }
         
-        void Detect()
+        void BtnAttach_Click(object sender, EventArgs e)
         {
-            Log("=== 偵測 ===");
+            Log("=== 附加到遊戲 ===");
             
-            // 嘗試多種方式找視窗
-            string[] names = {"Purple", "Lineage", "LineageClassic"};
-            foreach(string n in names)
+            // 找遊戲視窗
+            IntPtr hwnd = FindWindow(null, "lineage Classic");
+            if (hwnd == IntPtr.Zero) hwnd = FindWindow(null, "Lineage");
+            if (hwnd == IntPtr.Zero) hwnd = FindWindow(null, "天堂");
+            
+            if (hwnd == IntPtr.Zero)
             {
-                try{
-                    var ps = Process.GetProcessesByName(n);
-                    if(ps.Length > 0 && ps[0].MainWindowHandle != IntPtr.Zero)
+                // 嘗試用程序名稱
+                string[] names = { "Purple", "Lineage", "LineageClassic" };
+                foreach (string name in names)
+                {
+                    try
                     {
-                        hwnd = ps[0].MainWindowHandle;
-                        lbl.Text = $"找到: {n}";
-                        Log($"✓ 找到程序: {n}");
-                        return;
+                        Process[] ps = Process.GetProcessesByName(name);
+                        if (ps.Length > 0)
+                        {
+                            processId = ps[0].Id;
+                            hwnd = ps[0].MainWindowHandle;
+                            goto found;
+                        }
                     }
-                }catch{}
+                    catch { }
+                }
+                
+                Log("✗ 找不到遊戲程序");
+                MessageBox.Show("請確認遊戲已打開");
+                return;
             }
             
-            // 用標題
-            string[] titles = {"lineage Classic", "Lineage", "天堂"};
-            foreach(string t in titles)
+            found:
+            if (hwnd != IntPtr.Zero)
             {
-                hwnd = FindWindow(null, t);
-                if(hwnd != IntPtr.Zero)
+                GetWindowThreadProcessId(hwnd, out processId);
+                Log($"找到程序 ID: {processId}");
+                
+                // 打開程序
+                hProcess = OpenProcess(PROCESS_ALL_ACCESS, false, processId);
+                
+                if (hProcess != IntPtr.Zero)
                 {
-                    lbl.Text = $"找到: {t}";
-                    Log($"✓ 找到視窗: {t}");
-                    return;
+                    isAttached = true;
+                    btnStart.Enabled = true;
+                    lblStatus.Text = "狀態: 已附加";
+                    lblStatus.ForeColor = System.Drawing.Color.Green;
+                    Log("✓ 附加成功");
+                }
+                else
+                {
+                    // 嘗試用較低權限
+                    hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, processId);
+                    if (hProcess != IntPtr.Zero)
+                    {
+                        isAttached = true;
+                        btnStart.Enabled = true;
+                        lblStatus.Text = "狀態: 已附加(限制)";
+                        lblStatus.ForeColor = System.Drawing.Color.Orange;
+                        Log("✓ 附加成功(限制模式)");
+                    }
+                    else
+                    {
+                        Log("✗ 附加失敗，請用管理員身份");
+                        MessageBox.Show("請用管理員身份執行");
+                    }
                 }
             }
-            
-            // 用當前
-            hwnd = GetForegroundWindow();
-            if(hwnd != IntPtr.Zero)
+        }
+        
+        void BtnStart_Click(object sender, EventArgs e)
+        {
+            if (!isAttached)
             {
-                lbl.Text = "使用當前視窗";
-                Log("使用當前視窗");
+                MessageBox.Show("請先附加");
                 return;
             }
             
-            Log("✗ 未找到");
+            botRunning = true;
+            lblStatus.Text = "狀態: 讀取中...";
+            Log("開始讀取記憶體...");
+            
+            Thread t = new Thread(() => {
+                while(botRunning)
+                {
+                    try
+                    {
+                        // 讀取範例偏移量 (需要改成正確的)
+                        IntPtr baseAddr = new IntPtr(0x00A8B7C4);
+                        
+                        byte[] buffer = new byte[4];
+                        int bytesRead;
+                        
+                        if (ReadProcessMemory(hProcess, baseAddr, buffer, 4, out bytesRead))
+                        {
+                            int hp = BitConverter.ToInt32(buffer, 0);
+                            this.Invoke(new Action(() => {
+                                lblStatus.Text = $"HP: {hp}";
+                            }));
+                        }
+                        
+                        Thread.Sleep(500);
+                    }
+                    catch (Exception ex)
+                    {
+                        this.Invoke(new Action(() => {
+                            Log("錯誤: " + ex.Message);
+                        }));
+                    }
+                }
+            });
+            t.IsBackground = true;
+            t.Start();
         }
         
-        void TestClick(int x, int y)
+        void ReadMemory(TextBox txtHP, TextBox txtMP, TextBox txtX, TextBox txtY)
         {
-            if(hwnd == IntPtr.Zero)
+            if (!isAttached)
             {
-                hwnd = GetForegroundWindow();
-            }
-            
-            if(hwnd == IntPtr.Zero)
-            {
-                Log("請先偵測!");
+                MessageBox.Show("請先附加");
                 return;
             }
             
-            // 激活視窗
-            SetForegroundWindow(hwnd);
-            Thread.Sleep(300);
-            
-            // 使用 SendMessage 發送滑鼠點擊
-            // lParam = y * 65536 + x (低位是x，高位是y)
-            IntPtr lParam = (IntPtr)(y * 65536 + x);
-            
-            Log($"測試點擊: ({x}, {y})");
-            
-            // 滑鼠移動
-            SendMessage(hwnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
-            Thread.Sleep(50);
-            
-            // 按下左鍵
-            SendMessage(hwnd, WM_LBUTTONDOWN, (IntPtr)1, lParam);  // wParam = 1 表示左鍵
-            Thread.Sleep(100);
-            
-            // 放開左鍵
-            SendMessage(hwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
-            
-            Log("已發送點擊");
+            try
+            {
+                // 讀取 HP
+                IntPtr hpAddr = new IntPtr(Convert.ToInt32(txtHP.Text, 16));
+                byte[] hpBuf = new byte[4];
+                int hr;
+                if (ReadProcessMemory(hProcess, hpAddr, hpBuf, 4, out hr))
+                {
+                    int hp = BitConverter.ToInt32(hpBuf, 0);
+                    Log($"HP: {hp}");
+                }
+                else
+                {
+                    Log("HP讀取失敗");
+                }
+                
+                // 讀取 MP
+                IntPtr mpAddr = new IntPtr(Convert.ToInt32(txtMP.Text, 16));
+                byte[] mpBuf = new byte[4];
+                if (ReadProcessMemory(hProcess, mpAddr, mpBuf, 4, out hr))
+                {
+                    int mp = BitConverter.ToInt32(mpBuf, 0);
+                    Log($"MP: {mp}");
+                }
+                
+                // 讀取 X
+                IntPtr xAddr = new IntPtr(Convert.ToInt32(txtX.Text, 16));
+                byte[] xBuf = new byte[4];
+                if (ReadProcessMemory(hProcess, xAddr, xBuf, 4, out hr))
+                {
+                    float x = BitConverter.ToSingle(xBuf, 0);
+                    Log($"X: {x}");
+                }
+                
+                // 讀取 Y
+                IntPtr yAddr = new IntPtr(Convert.ToInt32(txtY.Text, 16));
+                byte[] yBuf = new byte[4];
+                if (ReadProcessMemory(hProcess, yAddr, yBuf, 4, out hr))
+                {
+                    float y = BitConverter.ToSingle(yBuf, 0);
+                    Log($"Y: {y}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("錯誤: " + ex.Message);
+            }
         }
         
-        void Log(string m)
+        void Log(string msg)
         {
-            if(txtLog.InvokeRequired)
+            if (txtLog.InvokeRequired)
                 txtLog.Invoke(new Action(() => {
-                    txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n");
+                    txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg}\r\n");
                     txtLog.SelectionStart = txtLog.Text.Length;
                     txtLog.ScrollToCaret();
                 }));
             else
-                txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n");
+            {
+                txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg}\r\n");
+            }
+        }
+        
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            botRunning = false;
+            if (hProcess != IntPtr.Zero)
+                CloseHandle(hProcess);
+            base.OnFormClosing(e);
         }
     }
 }
