@@ -10,305 +10,276 @@ namespace LineageHelper
 
     public class MainForm : Form
     {
+        // API
         [DllImport("user32.dll")] static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr hWnd, out POINT lpPoint);
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hWnd, out POINT lpPoint);
         [DllImport("user32.dll")] static extern bool SetCursorPos(int X, int Y);
         [DllImport("user32.dll")] static extern void mouse_event(uint dwFlags, int dx, int dy, int dwData, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
         
         [StructLayout(LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
         
+        [StructLayout(LayoutKind.Sequential)]
+        struct POINT { public int X, Y; }
+        
         const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
         const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        const uint KEYEVENTF_KEYDOWN = 0x0000, KEYEVENTF_KEYUP = 0x0002;
         
-        IntPtr gameWindow;
-        int winLeft, winTop, winWidth, winHeight;
-        int startX, startY;
-        bool botRunning = false, botPaused = false;
+        IntPtr hwnd;
+        int cx, cy; // 客戶區大小
         
-        TextBox txtLog, txtX, txtY, txtRange, txtDelay;
-        Label lblStatus, lblCoords;
-        Button btnDetect, btnStart, btnStop, btnPause;
-        Thread botThread;
-        Random rand = new Random();
+        bool running = false, paused = false;
+        TextBox txtLog;
+        Label lbl;
+        Button btnStart, btnStop, btnTest;
+        Thread th;
+        Random rnd = new Random();
         
         public MainForm()
         {
-            this.Text = "天堂輔助 v2.4 - 純滑鼠移動";
-            this.Size = new System.Drawing.Size(520, 520);
-            this.StartPosition = FormStartPosition.CenterScreen;
+            Text = "天堂輔助 v3.0";
+            Size = new System.Drawing.Size(450, 480);
+            StartPosition = FormStartPosition.CenterScreen;
             
-            // 偵測
-            btnDetect = new Button { Text = "🔍 自動偵測", Left = 15, Top = 15, Width = 130, Height = 35 };
-            btnDetect.Click += BtnDetect_Click;
+            // 狀態
+            lbl = new Label { Text = "請點擊[偵測]然後點擊天堂", Left = 15, Top = 15, Width = 400, Font = new System.Drawing.Font("", 10) };
             
-            lblCoords = new Label { Text = "視窗: 未偵測", Left = 155, Top = 20, Width = 340, ForeColor = System.Drawing.Color.Blue };
+            // 按鈕
+            var btnDetect = new Button { Text = "🔍 偵測", Left = 15, Top = 45, Width = 100, Height = 35 };
+            btnDetect.Click += (s,e) => Detect();
             
-            // 起始位置
-            var grpPos = new GroupBox { Text = "起始位置(滑鼠點擊位置)", Left = 15, Top = 60, Width = 240, Height = 70 };
-            var lblX = new Label { Text = "X:", Left = 10, Top = 25 };
-            txtX = new TextBox { Left = 30, Top = 22, Width = 60, Text = "400" };
-            var lblY = new Label { Text = "Y:", Left = 100, Top = 25 };
-            txtY = new TextBox { Left = 120, Top = 22, Width = 60, Text = "300" };
-            var btnSet = new Button { Text = "設", Left = 185, Top = 20, Width = 40 };
-            btnSet.Click += (s,e) => { SetStartPos(); };
-            grpPos.Controls.AddRange(new Control[] { lblX, txtX, txtY, lblY, btnSet });
+            btnTest = new Button { Text = "🖱️ 測試點擊", Left = 125, Top = 45, Width = 100, Height = 35, Enabled = false };
+            btnTest.Click += (s,e) => TestClick();
             
-            // 範圍和延遲
-            var grpSet = new GroupBox { Text = "設定", Left = 265, Top = 60, Width = 220, Height = 70 };
-            var lblR = new Label { Text = "範圍:", Left = 10, Top = 25 };
-            txtRange = new TextBox { Left = 55, Top = 22, Width = 50, Text = "80" };
-            var lblD = new Label { Text = "延遲:", Left = 110, Top = 25 };
-            txtDelay = new TextBox { Left = 155, Top = 22, Width = 50, Text = "2000" };
-            grpSet.Controls.AddRange(new Control[] { lblR, txtRange, lblD, txtDelay });
+            btnStart = new Button { Text = "▶ 啟動", Left = 235, Top = 45, Width = 90, Height = 35 };
+            btnStart.Click += (s,e) => Start();
             
-            // 控制
-            lblStatus = new Label { Text = "狀態: 待命", Left = 15, Top = 140, Width = 470, Font = new System.Drawing.Font("", 10) };
-            
-            btnStart = new Button { Text = "▶ 啟動", Left = 15, Top = 165, Width = 150, Height = 40, Font = new System.Drawing.Font("", 12) };
-            btnStart.Click += BtnStart_Click;
-            
-            btnPause = new Button { Text = "⏸ 暫停", Left = 175, Top = 165, Width = 80, Height = 40 };
-            btnPause.Click += (s,e) => { if(botRunning){ botPaused = !botPaused; lblStatus.Text = botPaused?"已暫停":"運行中"; } };
-            
-            btnStop = new Button { Text = "⏹ 停止", Left = 265, Top = 165, Width = 80, Height = 40 };
-            btnStop.Click += (s,e) => { botRunning = false; lblStatus.Text = "已停止"; btnStart.Enabled = true; Log("停止"); };
-            
-            // 測試按鈕
-            var grpTest = new GroupBox { Text = "測試移動(確保遊戲在前景)", Left = 15, Top = 215, Width = 470, Height = 70 };
-            var btn1 = new Button { Text = "← 左", Left = 10, Top = 25, Width = 70 };
-            btn1.Click += (s,e) => { int r=80; try{r=int.Parse(txtRange.Text);}catch{} MoveClick(startX-r, startY); };
-            var btn2 = new Button { Text = "↑ 上", Left = 90, Top = 25, Width = 70 };
-            btn2.Click += (s,e) => { int r=80; try{r=int.Parse(txtRange.Text);}catch{} MoveClick(startX, startY-r); };
-            var btn3 = new Button { Text = "↓ 下", Left = 170, Top = 25, Width = 70 };
-            btn3.Click += (s,e) => { int r=80; try{r=int.Parse(txtRange.Text);}catch{} MoveClick(startX, startY+r); };
-            var btn4 = new Button { Text = "→ 右", Left = 250, Top = 25, Width = 70 };
-            btn4.Click += (s,e) => { int r=80; try{r=int.Parse(txtRange.Text);}catch{} MoveClick(startX+r, startY); };
-            var btn5 = new Button { Text = "原地", Left = 330, Top = 25, Width = 70 };
-            btn5.Click += (s,e) => { MoveClick(startX, startY); };
-            var btn6 = new Button { Text = "隨機", Left = 390, Top = 25, Width = 60 };
-            btn6.Click += (s,e) => { int r=80; try{r=int.Parse(txtRange.Text);}catch{} MoveClick(startX+rand.Next(-r,r), startY+rand.Next(-r,r)); };
-            grpTest.Controls.AddRange(new Control[] { btn1, btn2, btn3, btn4, btn5, btn6 });
+            btnStop = new Button { Text = "⏹ 停止", Left = 335, Top = 45, Width = 80, Height = 35 };
+            btnStop.Click += (s,e) => { running = false; lbl.Text = "已停止"; btnStart.Enabled = true; };
             
             // 說明
-            var lblHelp = new Label { 
-                Text = "說明: 這是純滑鼠移動輔助程式。\n移動方式: 在遊戲內點擊地面進行移動。", 
-                Left = 15, Top = 290, Width = 470, Height = 40, ForeColor = System.Drawing.Color.Gray 
+            var info = new Label { 
+                Text = "操作說明:\n• 移動: 滑鼠左鍵點擊地面\n• 戰鬥: 按 A 鍵\n• 撿物: 按 S 鍵\n• 遊戲內用800x600視窗", 
+                Left = 15, Top = 90, Width = 400, Height = 70, ForeColor = System.Drawing.Color.Gray 
             };
             
-            txtLog = new TextBox { Left = 15, Top = 335, Width = 470, Height = 150, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
+            // 測試區
+            var g1 = new GroupBox { Text = "移動測試(確保遊戲在前)", Left = 15, Top = 170, Width = 400, Height = 60 };
+            var b1 = new Button { Text = "←", Left = 10, Top = 25, Width = 50 };
+            b1.Click += (s,e) => ClickAt(200, 300);
+            var b2 = new Button { Text = "→", Left = 70, Top = 25, Width = 50 };
+            b2.Click += (s,e) => ClickAt(600, 300);
+            var b3 = new Button { Text = "上", Left = 130, Top = 25, Width = 50 };
+            b3.Click += (s,e) => ClickAt(400, 150);
+            var b4 = new Button { Text = "下", Left = 190, Top = 25, Width = 50 };
+            b4.Click += (s,e) => ClickAt(400, 450);
+            var b5 = new Button { Text = "原地", Left = 250, Top = 25, Width = 60 };
+            b5.Click += (s,e) => ClickAt(400, 300);
+            var b6 = new Button { Text = "隨機", Left = 320, Top = 25, Width = 60 };
+            b6.Click += (s,e) => ClickAt(rnd.Next(100,700), rnd.Next(100,500));
+            g1.Controls.AddRange(new Control[]{b1,b2,b3,b4,b5,b6});
+            
+            // 鍵盤
+            var g2 = new GroupBox { Text = "鍵盤測試", Left = 15, Top = 240, Width = 400, Height = 60 };
+            var k1 = new Button { Text = "A(戰)", Left = 10, Top = 25, Width = 50 };
+            k1.Click += (s,e) => Key(0x41);
+            var k2 = new Button { Text = "S(撿)", Left = 70, Top = 25, Width = 50 };
+            k2.Click += (s,e) => Key(0x53);
+            var k3 = new Button { Text = "W", Left = 130, Top = 25, Width = 50 };
+            k3.Click += (s,e) => Key(0x57);
+            var k4 = new Button { Text = "F1", Left = 190, Top = 25, Width = 50 };
+            k4.Click += (s,e) => Key(0x70);
+            g2.Controls.AddRange(new Control[]{k1,k2,k3,k4});
+            
+            // 日誌
+            txtLog = new TextBox { Left = 15, Top = 310, Width = 400, Height = 130, Multiline=true, ScrollBars=ScrollBars.Vertical, ReadOnly=true };
             txtLog.Font = new System.Drawing.Font("Consolas", 9);
             
-            this.Controls.AddRange(new Control[] { btnDetect, lblCoords, grpPos, grpSet, lblStatus, btnStart, btnPause, btnStop, grpTest, lblHelp, txtLog });
+            Controls.AddRange(new Control[]{lbl, btnDetect, btnTest, btnStart, btnStop, info, g1, g2, txtLog});
             
-            Log("=== 天堂輔助 v2.4 ===");
-            Log("純滑鼠移動版本");
-            Log("1.偵測視窗 2.設定位置 3.測試 4.啟動");
+            Log("=== 天堂輔助 v3.0 ===");
         }
         
-        void SetStartPos()
-        {
-            try { startX = int.Parse(txtX.Text); startY = int.Parse(txtY.Text); Log($"設定起始: ({startX}, {startY})"); } catch {}
-        }
-        
-        void BtnDetect_Click(object sender, EventArgs e)
+        void Detect()
         {
             Log("=== 偵測 ===");
             
-            // 用程序名稱
-            string[] names = { "Purple", "Lineage", "LineageClassic", "LineageW" };
-            foreach (string name in names)
+            // 用標題找
+            string[] titles = {"lineage Classic", "Lineage", "天堂"};
+            foreach(string t in titles)
             {
-                try {
-                    Process[] ps = Process.GetProcessesByName(name);
-                    if (ps.Length > 0 && ps[0].MainWindowHandle != IntPtr.Zero)
+                hwnd = FindWindow(null, t);
+                if(hwnd != IntPtr.Zero) goto found;
+            }
+            
+            // 用程序名
+            string[] names = {"Purple", "Lineage", "LineageClassic"};
+            foreach(string n in names)
+            {
+                try{
+                    var ps = Process.GetProcessesByName(n);
+                    if(ps.Length > 0 && ps[0].MainWindowHandle != IntPtr.Zero)
                     {
-                        gameWindow = ps[0].MainWindowHandle;
-                        RECT rect; GetWindowRect(gameWindow, out rect);
-                        winLeft = rect.Left; winTop = rect.Top;
-                        winWidth = rect.Right - rect.Left;
-                        winHeight = rect.Bottom - rect.Top;
-                        
-                        lblCoords.Text = $"視窗: {name} ({winLeft},{winTop}) {winWidth}x{winHeight}";
-                        lblStatus.Text = "已偵測";
-                        
-                        startX = winWidth / 2;
-                        startY = winHeight / 2;
-                        txtX.Text = startX.ToString();
-                        txtY.Text = startY.ToString();
-                        
-                        Log($"✓ 找到: {name}");
-                        Log($"  螢幕位置: ({winLeft}, {winTop})");
-                        Log($"  大小: {winWidth} x {winHeight}");
-                        Log($"  起始位置: ({startX}, {startY})");
-                        return;
+                        hwnd = ps[0].MainWindowHandle;
+                        goto found;
                     }
-                } catch {}
+                }catch{}
             }
             
-            // 用標題
-            string[] titles = { "lineage Classic", "Lineage", "天堂" };
-            foreach (string title in titles)
+            // 用當前
+            hwnd = GetForegroundWindow();
+            
+            found:
+            if(hwnd != IntPtr.Zero)
             {
-                gameWindow = FindWindow(null, title);
-                if (gameWindow != IntPtr.Zero)
-                {
-                    RECT rect; GetWindowRect(gameWindow, out rect);
-                    winWidth = rect.Right - rect.Left;
-                    winHeight = rect.Bottom - rect.Top;
-                    
-                    startX = winWidth / 2;
-                    startY = winHeight / 2;
-                    txtX.Text = startX.ToString();
-                    txtY.Text = startY.ToString();
-                    
-                    lblCoords.Text = $"視窗: {title} {winWidth}x{winHeight}";
-                    Log($"✓ 找到: {title}");
-                    return;
-                }
+                RECT r;
+                GetClientRect(hwnd, out r);
+                cx = r.Right;
+                cy = r.Bottom;
+                
+                lbl.Text = $"客戶區: {cx}x{cy}";
+                btnTest.Enabled = true;
+                Log($"✓ 視窗大小: {cx}x{cy}");
             }
-            
-            // 用當前視窗
-            gameWindow = GetForegroundWindow();
-            if (gameWindow != IntPtr.Zero)
+            else
             {
-                RECT rect; GetWindowRect(gameWindow, out rect);
-                winLeft = rect.Left; winTop = rect.Top;
-                winWidth = rect.Right - rect.Left;
-                winHeight = rect.Bottom - rect.Top;
-                
-                lblCoords.Text = $"當前: {winWidth}x{winHeight}";
-                startX = winWidth / 2;
-                startY = winHeight / 2;
-                txtX.Text = startX.ToString();
-                txtY.Text = startY.ToString();
-                
-                Log("使用當前視窗");
-                return;
+                Log("✗ 未找到");
             }
-            
-            Log("✗ 未找到");
         }
         
-        void MoveClick(int x, int y)
+        void TestClick()
         {
-            if (gameWindow == IntPtr.Zero)
+            // 測試3個位置
+            ClickAt(200, 300);
+            Thread.Sleep(500);
+            ClickAt(400, 300);
+            Thread.Sleep(500);
+            ClickAt(600, 300);
+            Log("測試完成，請告訴我哪裡有反應");
+        }
+        
+        void ClickAt(int x, int y)
+        {
+            if(hwnd == IntPtr.Zero)
             {
-                gameWindow = GetForegroundWindow();
-                if (gameWindow != IntPtr.Zero)
+                hwnd = GetForegroundWindow();
+                if(hwnd != IntPtr.Zero)
                 {
-                    RECT rect; GetWindowRect(gameWindow, out rect);
-                    winLeft = rect.Left; winTop = rect.Top;
+                    RECT r; GetClientRect(hwnd, out r);
+                    cx = r.Right; cy = r.Bottom;
                 }
             }
             
-            if (gameWindow == IntPtr.Zero)
-            {
-                Log("請先偵測!");
-                return;
-            }
+            if(hwnd == IntPtr.Zero) { Log("請先偵測"); return; }
             
             // 激活
-            SetForegroundWindow(gameWindow);
+            SetForegroundWindow(hwnd);
             Thread.Sleep(200);
             
-            // 計算螢幕座標
-            int screenX = winLeft + x;
-            int screenY = winTop + y;
+            // 轉換座標
+            POINT p = new POINT { X = x, Y = y };
+            ClientToScreen(hwnd, out p);
             
-            SetCursorPos(screenX, screenY);
+            SetCursorPos(p.X, p.Y);
             Thread.Sleep(50);
+            
+            // 按下
             mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
             Thread.Sleep(100);
+            // 放開
             mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
             
-            Log($"點擊: ({x}, {y}) -> 螢幕: ({screenX}, {screenY})");
+            Log($"點擊: ({x},{y})");
         }
         
-        void BtnStart_Click(object sender, EventArgs e)
+        void Key(byte vk)
         {
-            SetStartPos();
-            
-            if (gameWindow == IntPtr.Zero)
+            if(hwnd != IntPtr.Zero)
             {
-                gameWindow = GetForegroundWindow();
+                SetForegroundWindow(hwnd);
+                Thread.Sleep(100);
             }
             
-            if (gameWindow == IntPtr.Zero)
-            {
-                MessageBox.Show("請先偵測視窗");
-                return;
-            }
+            keybd_event(vk, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero);
+            Thread.Sleep(50);
+            keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
             
-            botRunning = true;
-            botPaused = false;
+            Log($"按鍵: {vk:X2}");
+        }
+        
+        void Start()
+        {
+            if(hwnd == IntPtr.Zero) { MessageBox.Show("請先偵測"); return; }
+            
+            running = true;
             btnStart.Enabled = false;
-            lblStatus.Text = "運行中";
+            lbl.Text = "運行中...";
             Log(">>> 啟動 <<<");
             
-            botThread = new Thread(BotLoop);
-            botThread.IsBackground = true;
-            botThread.Start();
+            th = new Thread(Bot);
+            th.IsBackground = true;
+            th.Start();
         }
         
-        void BotLoop()
+        void Bot()
         {
-            int cycle = 0;
-            while (botRunning)
+            int c = 0;
+            while(running)
             {
-                try
-                {
-                    if (botPaused) { Thread.Sleep(500); continue; }
+                try{
+                    if(paused) { Thread.Sleep(500); continue; }
                     
-                    cycle++;
+                    c++;
                     
-                    // 保持前台
-                    SetForegroundWindow(gameWindow);
+                    SetForegroundWindow(hwnd);
                     Thread.Sleep(100);
                     
-                    // 計算位置
-                    int range = 80, delay = 2000;
-                    try { range = int.Parse(txtRange.Text); } catch {}
-                    try { delay = int.Parse(txtDelay.Text); } catch {}
-                    
-                    int newX = startX + rand.Next(-range, range);
-                    int newY = startY + rand.Next(-range, range);
+                    // 隨機位置
+                    int x = rnd.Next(100, cx-100);
+                    int y = rnd.Next(100, cy-100);
                     
                     // 點擊
-                    int screenX = winLeft + newX;
-                    int screenY = winTop + newY;
-                    
-                    SetCursorPos(screenX, screenY);
+                    POINT p = new POINT { X = x, Y = y };
+                    ClientToScreen(hwnd, out p);
+                    SetCursorPos(p.X, p.Y);
                     Thread.Sleep(30);
                     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
                     Thread.Sleep(80);
                     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
                     
-                    this.Invoke(new Action(() => Log($"[{cycle}] 移動: ({newX},{newY})")));
+                    this.Invoke(new Action(() => Log($"[{c}] 移動 ({x},{y})")));
                     
-                    Thread.Sleep(delay);
+                    Thread.Sleep(rnd.Next(2000, 4000));
                     
+                    // 攻擊
+                    if(c % 5 == 0)
+                    {
+                        this.Invoke(new Action(() => {
+                            Key(0x41);
+                            Log("⚔ 戰鬥");
+                        }));
+                    }
                 }
-                catch (Exception ex) { this.Invoke(new Action(() => Log("錯誤: " + ex.Message))); }
+                catch(Exception ex) { this.Invoke(new Action(() => Log("Err:" + ex.Message))); }
             }
             
             this.Invoke(new Action(() => { btnStart.Enabled = true; Log("停止"); }));
         }
         
-        void Log(string msg)
+        void Log(string m)
         {
-            if (txtLog.InvokeRequired) txtLog.Invoke(new Action(() => { 
-                txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); 
-                txtLog.SelectionStart = txtLog.Text.Length; 
-                txtLog.ScrollToCaret(); 
+            if(txtLog.InvokeRequired) txtLog.Invoke(new Action(() => {
+                txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n");
+                txtLog.SelectionStart = txtLog.Text.Length;
+                txtLog.ScrollToCaret();
             }));
-            else { 
-                txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); 
-                txtLog.SelectionStart = txtLog.Text.Length; 
-                txtLog.ScrollToCaret(); 
-            }
         }
     }
 }
