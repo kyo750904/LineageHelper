@@ -28,7 +28,7 @@ namespace LineageHelper
         
         public MainForm()
         {
-            this.Text = "天堂輔助程式 v1.0";
+            this.Text = "天堂輔助程式 v1.1";
             this.Size = new System.Drawing.Size(450, 380);
             this.StartPosition = FormStartPosition.CenterScreen;
             
