@@ -24,15 +24,17 @@ namespace LineageHelper
         TextBox txtProcess, txtLog;
         Label lblStatus;
         Button btnAttach, btnStart, btnStop, btnPause, btnAutoDetect;
+        Thread botThread;
+        Random rand = new Random();
         
         public MainForm()
         {
-            this.Text = "天堂輔助程式 v1.2";
-            this.Size = new System.Drawing.Size(450, 420);
+            this.Text = "天堂輔助程式 v1.3";
+            this.Size = new System.Drawing.Size(450, 450);
             this.StartPosition = FormStartPosition.CenterScreen;
             
             var lbl1 = new Label { Text = "遊戲程序:", Left = 15, Top = 15 };
-            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130, Text = "Lineage" };
+            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130, Text = "Purple" };
             btnAutoDetect = new Button { Text = "自動檢測", Left = 220, Top = 13, Width = 85 };
             btnAutoDetect.Click += BtnAutoDetect_Click;
             btnAttach = new Button { Text = "附加", Left = 310, Top = 13, Width = 70 };
@@ -58,16 +60,27 @@ namespace LineageHelper
             btnTest3.Click += (s,e) => { keybd_event(0x51, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero); Thread.Sleep(50); keybd_event(0x51, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); Log("已發送 Q"); };
             var btnTest4 = new Button { Text = "按 W", Left = 205, Top = 25, Width = 60 };
             btnTest4.Click += (s,e) => { keybd_event(0x57, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero); Thread.Sleep(50); keybd_event(0x57, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); Log("已發送 W"); };
-            grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4 });
+            var btnTestAttack = new Button { Text = "攻擊", Left = 270, Top = 25, Width = 60 };
+            btnTestAttack.Click += (s,e) => { SendKeys("a"); Log("已發送攻擊"); };
+            grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4, btnTestAttack });
             
             var lblLog = new Label { Text = "日誌:", Left = 15, Top = 235 };
-            txtLog = new TextBox { Left = 15, Top = 255, Width = 410, Height = 110, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
+            txtLog = new TextBox { Left = 15, Top = 255, Width = 410, Height = 150, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
             txtLog.Font = new System.Drawing.Font("Consolas", 9);
             
             this.Controls.AddRange(new Control[] { lbl1, txtProcess, btnAutoDetect, btnAttach, lblStatus, btnStart, btnStop, btnPause, lblHotkey, grp, lblLog, txtLog });
             
-            Log("=== 天堂輔助程式 v1.2 ===");
-            Log("點擊「自動檢測」找遊戲");
+            Log("=== 天堂輔助程式 v1.3 ===");
+            Log("1. 打開天堂遊戲");
+            Log("2. 點擊「自動檢測」");
+            Log("3. 點擊「附加」");
+            Log("4. 點擊「啟動」開始掛機");
+        }
+        
+        void SendKeys(string keys)
+        {
+            SendKeys.Send(keys);
+            Thread.Sleep(100);
         }
         
         void BtnAutoDetect_Click(object sender, EventArgs e)
@@ -75,53 +88,89 @@ namespace LineageHelper
             Log("正在檢測遊戲程序...");
             
             // 常見的遊戲程序名稱
-            string[] possibleNames = { "Purple", "Lineage", "LineageClassic", "LineageW", "Launcher" };
+            string[] possibleNames = { "Purple", "Lineage", "LineageClassic", "LineageW", "Launcher", "LineageM" };
             
             // 先檢查運行的程序
             foreach (string name in possibleNames)
             {
-                Process[] ps = Process.GetProcessesByName(name);
-                if (ps.Length > 0)
+                try
                 {
-                    txtProcess.Text = name;
-                    Log($"找到遊戲: {name}");
-                    return;
+                    Process[] ps = Process.GetProcessesByName(name);
+                    if (ps.Length > 0)
+                    {
+                        txtProcess.Text = name;
+                        Log($"✓ 找到遊戲: {name}");
+                        // 自動附加
+                        Process pr = ps[0];
+                        processId = pr.Id;
+                        hProcess = OpenProcess(PROCESS_VM_READ, false, processId);
+                        if (hProcess != IntPtr.Zero)
+                        {
+                            isAttached = true;
+                            lblStatus.Text = "狀態: 已連接";
+                            lblStatus.ForeColor = System.Drawing.Color.Green;
+                            Log($"✓ 已附加到 {name} (PID:{processId})");
+                            
+                            // 自動啟動
+                            BtnStart_Click(sender, e);
+                            return;
+                        }
+                    }
                 }
+                catch { }
             }
             
             // 檢查 NCSOFT 資料夾
-            string ncsoftPath = @"C:\Program Files (x86)\NCSOFT";
-            if (Directory.Exists(ncsoftPath))
+            string[] paths = {
+                @"C:\Program Files (x86)\NCSOFT",
+                @"C:\Program Files\NCSOFT",
+                @"C:\Games\NCSOFT"
+            };
+            
+            foreach (string basePath in paths)
             {
-                try
+                if (Directory.Exists(basePath))
                 {
-                    foreach (string dir in Directory.GetDirectories(ncsoftPath))
+                    try
                     {
-                        string dirName = Path.GetFileName(dir);
-                        Log($"檢測資料夾: {dirName}");
-                        
-                        foreach (string exe in Directory.GetFiles(dir, "*.exe"))
+                        foreach (string dir in Directory.GetDirectories(basePath))
                         {
-                            string exeName = Path.GetFileNameWithoutExtension(exe);
-                            if (exeName.Contains("Lineage") || exeName.Contains("Purple"))
+                            string dirName = Path.GetFileName(dir);
+                            foreach (string exe in Directory.GetFiles(dir, "*.exe"))
                             {
-                                // 檢查是否正在運行
-                                Process[] ps = Process.GetProcessesByName(exeName);
-                                if (ps.Length > 0)
+                                string exeName = Path.GetFileNameWithoutExtension(exe);
+                                if (exeName.Contains("Lineage") || exeName.Contains("Purple"))
                                 {
-                                    txtProcess.Text = exeName;
-                                    Log($"找到遊戲: {exeName}");
-                                    return;
+                                    try
+                                    {
+                                        Process[] ps = Process.GetProcessesByName(exeName);
+                                        if (ps.Length > 0)
+                                        {
+                                            txtProcess.Text = exeName;
+                                            processId = ps[0].Id;
+                                            hProcess = OpenProcess(PROCESS_VM_READ, false, processId);
+                                            if (hProcess != IntPtr.Zero)
+                                            {
+                                                isAttached = true;
+                                                lblStatus.Text = "狀態: 已連接";
+                                                lblStatus.ForeColor = System.Drawing.Color.Green;
+                                                Log($"✓ 找到並附加: {exeName}");
+                                                BtnStart_Click(sender, e);
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    catch { }
                                 }
                             }
                         }
                     }
+                    catch { }
                 }
-                catch (Exception ex) { Log($"檢測錯誤: {ex.Message}"); }
             }
             
-            Log("未找到遊戲，請手動輸入");
-            MessageBox.Show("請手動輸入遊戲程序名稱\n或確認遊戲已打開", "提示");
+            Log("✗ 未找到遊戲");
+            MessageBox.Show("請確認遊戲已打開，然後手動輸入程序名稱", "提示");
         }
         
         void BtnAttach_Click(object sender, EventArgs e)
@@ -129,26 +178,86 @@ namespace LineageHelper
             string name = txtProcess.Text.Trim();
             if (name == "") { MessageBox.Show("請輸入程序名稱"); return; }
             
-            Process[] ps = Process.GetProcessesByName(name);
-            if (ps.Length == 0) { MessageBox.Show("找不到程序: " + name + "\n請確認遊戲是否已打開"); return; }
-            
-            processId = ps[0].Id;
-            hProcess = OpenProcess(PROCESS_VM_READ, false, processId);
-            if (hProcess == IntPtr.Zero) { MessageBox.Show("無法附加，請用系統管理員身份執行"); return; }
-            
-            isAttached = true;
-            lblStatus.Text = "狀態: 已連接";
-            lblStatus.ForeColor = System.Drawing.Color.Green;
-            Log("已附加到: " + name + " (PID:" + processId + ")");
+            try
+            {
+                Process[] ps = Process.GetProcessesByName(name);
+                if (ps.Length == 0) { MessageBox.Show("找不到程序: " + name + "\n請確認遊戲是否已打開"); return; }
+                
+                processId = ps[0].Id;
+                hProcess = OpenProcess(PROCESS_VM_READ, false, processId);
+                if (hProcess == IntPtr.Zero) { MessageBox.Show("無法附加，請用系統管理員身份執行"); return; }
+                
+                isAttached = true;
+                lblStatus.Text = "狀態: 已連接";
+                lblStatus.ForeColor = System.Drawing.Color.Green;
+                Log("已附加到: " + name + " (PID:" + processId + ")");
+            }
+            catch (Exception ex) { MessageBox.Show("錯誤: " + ex.Message); }
         }
         
         void BtnStart_Click(object sender, EventArgs e)
         {
             if (!isAttached) { MessageBox.Show("請先附加到遊戲"); return; }
+            if (botRunning) return;
+            
             botRunning = true; botPaused = false;
             lblStatus.Text = "狀態: 運行中";
             lblStatus.ForeColor = System.Drawing.Color.Green;
-            Log("機器人已啟動");
+            Log(">>> 機器人啟動 <<<");
+            
+            // 啟動自動掛機線程
+            botThread = new Thread(BotLoop);
+            botThread.IsBackground = true;
+            botThread.Start();
+        }
+        
+        void BotLoop()
+        {
+            int cycle = 0;
+            while (botRunning)
+            {
+                try
+                {
+                    if (botPaused)
+                    {
+                        Thread.Sleep(500);
+                        continue;
+                    }
+                    
+                    cycle++;
+                    
+                    // 模擬人類行為的隨機延遲
+                    int delay = rand.Next(500, 2000);
+                    Thread.Sleep(delay);
+                    
+                    if (cycle % 10 == 0)
+                    {
+                        // 每隔一段時間發送攻擊
+                        this.Invoke(new Action(() => {
+                            try {
+                                SendKeys("a");
+                                Log("→ 攻擊");
+                            } catch {}
+                        }));
+                    }
+                    
+                    if (cycle % 30 == 0)
+                    {
+                        // 移動
+                        string[] moves = { "w", "s", "a", "d" };
+                        string move = moves[rand.Next(moves.Length)];
+                        this.Invoke(new Action(() => {
+                            try {
+                                SendKeys(move);
+                                Log("→ 移動: " + move);
+                            } catch {}
+                        }));
+                    }
+                    
+                }
+                catch { }
+            }
+            Log("機器人已停止");
         }
         
         void BtnStop_Click(object sender, EventArgs e)
@@ -156,7 +265,7 @@ namespace LineageHelper
             botRunning = false;
             lblStatus.Text = "狀態: 已停止";
             lblStatus.ForeColor = System.Drawing.Color.Red;
-            Log("機器人已停止");
+            Log(">>> 機器人停止 <<<");
         }
         
         void BtnPause_Click(object sender, EventArgs e)
@@ -164,13 +273,21 @@ namespace LineageHelper
             if (!botRunning) { MessageBox.Show("請先啟動"); return; }
             botPaused = !botPaused;
             lblStatus.Text = botPaused ? "狀態: 已暫停" : "狀態: 運行中";
-            Log(botPaused ? "已暫停" : "已繼續");
+            Log(botPaused ? "|| 已暫停" : "▶ 已繼續");
         }
         
         void Log(string msg)
         {
-            if (txtLog.InvokeRequired) txtLog.Invoke(new Action(() => { txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); txtLog.SelectionStart = txtLog.Text.Length; txtLog.ScrollToCaret(); }));
-            else { txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); txtLog.SelectionStart = txtLog.Text.Length; txtLog.ScrollToCaret(); }
+            if (txtLog.InvokeRequired) txtLog.Invoke(new Action(() => { 
+                txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); 
+                txtLog.SelectionStart = txtLog.Text.Length; 
+                txtLog.ScrollToCaret(); 
+            }));
+            else { 
+                txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + "\r\n"); 
+                txtLog.SelectionStart = txtLog.Text.Length; 
+                txtLog.ScrollToCaret(); 
+            }
         }
     }
 }
