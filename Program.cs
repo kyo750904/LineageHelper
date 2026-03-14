@@ -1,4 +1,4 @@
-using System; using System.Windows.Forms; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading;
+using System; using System.Windows.Forms; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading; using System.IO;
 
 namespace LineageHelper
 {
@@ -10,7 +10,6 @@ namespace LineageHelper
 
     public class MainForm : Form
     {
-        // Windows API
         [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
         [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int nSize, out int lpNumberOfBytesRead);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr hObject);
@@ -24,17 +23,19 @@ namespace LineageHelper
         
         TextBox txtProcess, txtLog;
         Label lblStatus;
-        Button btnAttach, btnStart, btnStop, btnPause;
+        Button btnAttach, btnStart, btnStop, btnPause, btnAutoDetect;
         
         public MainForm()
         {
-            this.Text = "天堂輔助程式 v1.1";
-            this.Size = new System.Drawing.Size(450, 380);
+            this.Text = "天堂輔助程式 v1.2";
+            this.Size = new System.Drawing.Size(450, 420);
             this.StartPosition = FormStartPosition.CenterScreen;
             
             var lbl1 = new Label { Text = "遊戲程序:", Left = 15, Top = 15 };
-            txtProcess = new TextBox { Left = 85, Top = 15, Width = 180, Text = "Lineage" };
-            btnAttach = new Button { Text = "附加", Left = 275, Top = 13, Width = 70 };
+            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130, Text = "Lineage" };
+            btnAutoDetect = new Button { Text = "自動檢測", Left = 220, Top = 13, Width = 85 };
+            btnAutoDetect.Click += BtnAutoDetect_Click;
+            btnAttach = new Button { Text = "附加", Left = 310, Top = 13, Width = 70 };
             btnAttach.Click += BtnAttach_Click;
             
             lblStatus = new Label { Text = "狀態: 未連接", Left = 15, Top = 45, Width = 400, ForeColor = System.Drawing.Color.Red };
@@ -60,15 +61,67 @@ namespace LineageHelper
             grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4 });
             
             var lblLog = new Label { Text = "日誌:", Left = 15, Top = 235 };
-            txtLog = new TextBox { Left = 15, Top = 255, Width = 410, Height = 80, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
+            txtLog = new TextBox { Left = 15, Top = 255, Width = 410, Height = 110, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
             txtLog.Font = new System.Drawing.Font("Consolas", 9);
             
-            this.Controls.AddRange(new Control[] { lbl1, txtProcess, btnAttach, lblStatus, btnStart, btnStop, btnPause, lblHotkey, grp, lblLog, txtLog });
+            this.Controls.AddRange(new Control[] { lbl1, txtProcess, btnAutoDetect, btnAttach, lblStatus, btnStart, btnStop, btnPause, lblHotkey, grp, lblLog, txtLog });
             
-            Log("=== 天堂輔助程式 v1.0 ===");
-            Log("1. 先打開天堂遊戲");
-            Log("2. 輸入程序名並點擊附加");
-            Log("3. 點擊啟動開始掛機");
+            Log("=== 天堂輔助程式 v1.2 ===");
+            Log("點擊「自動檢測」找遊戲");
+        }
+        
+        void BtnAutoDetect_Click(object sender, EventArgs e)
+        {
+            Log("正在檢測遊戲程序...");
+            
+            // 常見的遊戲程序名稱
+            string[] possibleNames = { "Purple", "Lineage", "LineageClassic", "LineageW", "Launcher" };
+            
+            // 先檢查運行的程序
+            foreach (string name in possibleNames)
+            {
+                Process[] ps = Process.GetProcessesByName(name);
+                if (ps.Length > 0)
+                {
+                    txtProcess.Text = name;
+                    Log($"找到遊戲: {name}");
+                    return;
+                }
+            }
+            
+            // 檢查 NCSOFT 資料夾
+            string ncsoftPath = @"C:\Program Files (x86)\NCSOFT";
+            if (Directory.Exists(ncsoftPath))
+            {
+                try
+                {
+                    foreach (string dir in Directory.GetDirectories(ncsoftPath))
+                    {
+                        string dirName = Path.GetFileName(dir);
+                        Log($"檢測資料夾: {dirName}");
+                        
+                        foreach (string exe in Directory.GetFiles(dir, "*.exe"))
+                        {
+                            string exeName = Path.GetFileNameWithoutExtension(exe);
+                            if (exeName.Contains("Lineage") || exeName.Contains("Purple"))
+                            {
+                                // 檢查是否正在運行
+                                Process[] ps = Process.GetProcessesByName(exeName);
+                                if (ps.Length > 0)
+                                {
+                                    txtProcess.Text = exeName;
+                                    Log($"找到遊戲: {exeName}");
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex) { Log($"檢測錯誤: {ex.Message}"); }
+            }
+            
+            Log("未找到遊戲，請手動輸入");
+            MessageBox.Show("請手動輸入遊戲程序名稱\n或確認遊戲已打開", "提示");
         }
         
         void BtnAttach_Click(object sender, EventArgs e)
