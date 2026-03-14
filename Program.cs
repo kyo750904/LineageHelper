@@ -61,7 +61,7 @@ namespace LineageHelper
             var btnTest4 = new Button { Text = "按 W", Left = 205, Top = 25, Width = 60 };
             btnTest4.Click += (s,e) => { keybd_event(0x57, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero); Thread.Sleep(50); keybd_event(0x57, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); Log("已發送 W"); };
             var btnTestAttack = new Button { Text = "攻擊", Left = 270, Top = 25, Width = 60 };
-            btnTestAttack.Click += (s,e) => { SendKeys("a"); Log("已發送攻擊"); };
+            btnTestAttack.Click += (s,e) => { SendKeyInput("a"); Log("已發送攻擊"); };
             grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4, btnTestAttack });
             
             var lblLog = new Label { Text = "日誌:", Left = 15, Top = 235 };
@@ -77,7 +77,7 @@ namespace LineageHelper
             Log("4. 點擊「啟動」開始掛機");
         }
         
-        void SendKeys(string keys)
+        void SendKeyInput(string keys)
         {
             SendKeys.Send(keys);
             Thread.Sleep(100);
@@ -235,7 +235,7 @@ namespace LineageHelper
                         // 每隔一段時間發送攻擊
                         this.Invoke(new Action(() => {
                             try {
-                                SendKeys("a");
+                                SendKeyInput("a");
                                 Log("→ 攻擊");
                             } catch {}
                         }));
@@ -248,7 +248,7 @@ namespace LineageHelper
                         string move = moves[rand.Next(moves.Length)];
                         this.Invoke(new Action(() => {
                             try {
-                                SendKeys(move);
+                                SendKeyInput(move);
                                 Log("→ 移動: " + move);
                             } catch {}
                         }));
