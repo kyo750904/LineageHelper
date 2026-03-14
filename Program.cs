@@ -17,17 +17,14 @@ namespace LineageHelper
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
-        [DllImport("user32.dll")] static extern void mouse_event(uint dwFlags, int dx, int dy, int dwData, UIntPtr dwExtraInfo);
-        [DllImport("user32.dll")] static extern bool SetCursorPos(int X, int Y);
+        [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
         
         [StructLayout(LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
         
         const int WM_LBUTTONDOWN = 0x0201;
         const int WM_LBUTTONUP = 0x0202;
-        const int WM_MOUSEMOVE = 0x0200;
-        const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-        const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        const uint KEYEVENTF_KEYDOWN = 0x0000, KEYEVENTF_KEYUP = 0x0002;
         
         IntPtr gameWindowHandle;
         bool isAttached, botRunning = false, botPaused = false;
@@ -45,8 +42,7 @@ namespace LineageHelper
             this.StartPosition = FormStartPosition.CenterScreen;
             
             var lbl1 = new Label { Text = "遊戲視窗:", Left = 15, Top = 15 };
-            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130, Text = "" };
-            txtProcess.PlaceholderText = "可留空自動搜尋";
+            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130 };
             btnAutoDetect = new Button { Text = "自動檢測", Left = 220, Top = 13, Width = 85 };
             btnAutoDetect.Click += BtnAutoDetect_Click;
             btnAttach = new Button { Text = "附加", Left = 310, Top = 13, Width = 70 };
@@ -68,10 +64,10 @@ namespace LineageHelper
             btnTest1.Click += (s,e) => { GameClick(400, 300); Log("已點擊中央"); };
             var btnTest2 = new Button { Text = "點擊左上", Left = 100, Top = 30, Width = 80 };
             btnTest2.Click += (s,e) => { GameClick(200, 150); Log("已點擊左上"); };
-            var btnTest3 = new Button { Text = "攻擊(Ctrl+A)", Left = 190, Top = 30, Width = 100 };
-            btnTest3.Click += (s,e) => { SendKeys("a"); Log("已發送攻擊"); };
-            var btnTest4 = new Button { Text = "撿物(Alt)", Left = 300, Top = 30, Width = 80 };
-            btnTest4.Click += (s,e) => { Log("請手動按Alt"); };
+            var btnTest3 = new Button { Text = "攻擊", Left = 190, Top = 30, Width = 80 };
+            btnTest3.Click += (s,e) => { PressKey(0x41); Log("已發送攻擊"); };
+            var btnTest4 = new Button { Text = "F1", Left = 280, Top = 30, Width = 60 };
+            btnTest4.Click += (s,e) => { PressKey(0x70); Log("F1"); };
             grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4 });
             
             var lblLog = new Label { Text = "日誌:", Left = 15, Top = 255 };
@@ -87,24 +83,30 @@ namespace LineageHelper
             Log("4. 點擊「啟動」");
         }
         
+        void PressKey(byte vk)
+        {
+            keybd_event(vk, 0, KEYEVENTF_KEYDOWN, UIntPtr.Zero);
+            Thread.Sleep(50);
+            keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        }
+        
         void BtnAutoDetect_Click(object sender, EventArgs e)
         {
             Log("正在搜尋遊戲視窗...");
             
-            // 嘗試多種方式找視窗
-            string[] titles = { "天堂", "Lineage", "Purple", "天堂經典版" };
+            string[] titles = { "天堂", "Lineage", "Purple", "天堂經典版", "天堂 經典版" };
             
             foreach (string title in titles)
             {
                 gameWindowHandle = FindWindow(null, title);
                 if (gameWindowHandle != IntPtr.Zero)
                 {
-                    Log($"✓ 找到視窗: {title}");
+                    Log("✓ 找到視窗: " + title);
                     RECT rect;
                     GetWindowRect(gameWindowHandle, out rect);
                     int width = rect.Right - rect.Left;
                     int height = rect.Bottom - rect.Top;
-                    Log($"  視窗大小: {width}x{height}");
+                    Log("  視窗大小: " + width + "x" + height);
                     isAttached = true;
                     lblStatus.Text = "狀態: 已找到視窗";
                     lblStatus.ForeColor = System.Drawing.Color.Green;
@@ -112,14 +114,13 @@ namespace LineageHelper
                 }
             }
             
-            // 嘗試用類名找
             string[] classes = { "LineageWindow", "GWndClass", "#32770" };
             foreach (string cls in classes)
             {
                 gameWindowHandle = FindWindow(cls, null);
                 if (gameWindowHandle != IntPtr.Zero)
                 {
-                    Log($"✓ 找到視窗(class): {cls}");
+                    Log("✓ 找到視窗(class): " + cls);
                     isAttached = true;
                     lblStatus.Text = "狀態: 已找到視窗";
                     lblStatus.ForeColor = System.Drawing.Color.Green;
@@ -173,11 +174,9 @@ namespace LineageHelper
         {
             if (gameWindowHandle == IntPtr.Zero) return;
             
-            // 先激活視窗
             SetForegroundWindow(gameWindowHandle);
             Thread.Sleep(100);
             
-            // 發送點擊訊息
             IntPtr lParam = (IntPtr)((y << 16) | (x & 0xFFFF));
             SendMessage(gameWindowHandle, WM_LBUTTONDOWN, IntPtr.Zero, lParam);
             Thread.Sleep(rand.Next(50, 150));
@@ -195,7 +194,6 @@ namespace LineageHelper
                     
                     cycle++;
                     
-                    // 確保遊戲視窗是前景
                     IntPtr current = GetForegroundWindow();
                     if (current != gameWindowHandle)
                     {
@@ -203,38 +201,24 @@ namespace LineageHelper
                         Thread.Sleep(200);
                     }
                     
-                    // 隨機延遲
                     int delay = rand.Next(1000, 3000);
                     Thread.Sleep(delay);
                     
                     if (cycle % 3 == 0)
                     {
-                        // 點擊移動 (在視窗中央區域隨機位置)
                         int clickX = rand.Next(200, 600);
                         int clickY = rand.Next(150, 450);
                         this.Invoke(new Action(() => {
                             GameClick(clickX, clickY);
-                            Log($"↗ 移動點擊 ({clickX},{clickY})");
+                            Log("↗ 移動 (" + clickX + "," + clickY + ")");
                         }));
                     }
                     
                     if (cycle % 10 == 0)
                     {
-                        // 攻擊
                         this.Invoke(new Action(() => {
-                            SendKeys("a");
+                            PressKey(0x41);
                             Log("⚔ 攻擊");
-                        }));
-                    }
-                    
-                    if (cycle % 20 == 0)
-                    {
-                        // 撿物
-                        this.Invoke(new Action(() => {
-                            SendKeys("{F1}");
-                            Thread.Sleep(200);
-                            SendKeys("{F2}");
-                            Log("📦 撿物");
                         }));
                     }
                     
