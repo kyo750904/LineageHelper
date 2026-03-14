@@ -1,4 +1,4 @@
-using System; using System.Windows.Forms; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading; using System.IO;
+using System; using System.Windows.Forms; using System.Diagnostics; using System.Runtime.InteropServices; using System.Threading;
 
 namespace LineageHelper
 {
@@ -10,14 +10,13 @@ namespace LineageHelper
 
     public class MainForm : Form
     {
-        // Windows API
         [DllImport("user32.dll")] static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-        [DllImport("user32.dll")] static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
         
         [StructLayout(LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
@@ -27,9 +26,10 @@ namespace LineageHelper
         const uint KEYEVENTF_KEYDOWN = 0x0000, KEYEVENTF_KEYUP = 0x0002;
         
         IntPtr gameWindowHandle;
+        int winWidth = 800, winHeight = 600;
         bool isAttached, botRunning = false, botPaused = false;
         
-        TextBox txtProcess, txtLog;
+        TextBox txtProcess, txtLog, txtX1, txtY1, txtX2, txtY2;
         Label lblStatus;
         Button btnAttach, btnStart, btnStop, btnPause, btnAutoDetect;
         Thread botThread;
@@ -37,18 +37,18 @@ namespace LineageHelper
         
         public MainForm()
         {
-            this.Text = "天堂輔助程式 v1.5";
-            this.Size = new System.Drawing.Size(450, 480);
+            this.Text = "天堂輔助程式 v1.6";
+            this.Size = new System.Drawing.Size(480, 550);
             this.StartPosition = FormStartPosition.CenterScreen;
             
             var lbl1 = new Label { Text = "遊戲視窗:", Left = 15, Top = 15 };
-            txtProcess = new TextBox { Left = 85, Top = 15, Width = 130 };
-            btnAutoDetect = new Button { Text = "自動檢測", Left = 220, Top = 13, Width = 85 };
+            txtProcess = new TextBox { Left = 85, Top = 15, Width = 120 };
+            btnAutoDetect = new Button { Text = "自動檢測", Left = 210, Top = 13, Width = 85 };
             btnAutoDetect.Click += BtnAutoDetect_Click;
-            btnAttach = new Button { Text = "附加", Left = 310, Top = 13, Width = 70 };
+            btnAttach = new Button { Text = "附加", Left = 300, Top = 13, Width = 70 };
             btnAttach.Click += BtnAttach_Click;
             
-            lblStatus = new Label { Text = "狀態: 未連接", Left = 15, Top = 45, Width = 400, ForeColor = System.Drawing.Color.Red };
+            lblStatus = new Label { Text = "狀態: 未連接", Left = 15, Top = 45, Width = 440, ForeColor = System.Drawing.Color.Red };
             
             btnStart = new Button { Text = "啟動", Left = 15, Top = 75, Width = 80 };
             btnStart.Click += BtnStart_Click;
@@ -57,30 +57,73 @@ namespace LineageHelper
             btnPause = new Button { Text = "暫停", Left = 195, Top = 75, Width = 80 };
             btnPause.Click += BtnPause_Click;
             
-            var lblInfo = new Label { Text = "說明: 先點擊遊戲視窗激活,再啟動", Left = 15, Top = 115, Width = 400, ForeColor = System.Drawing.Color.Gray };
+            // 點擊範圍設定
+            var grpRange = new GroupBox { Text = "點擊範圍(視窗內座標)", Left = 15, Top = 110, Width = 440, Height = 70 };
+            var lblX = new Label { Text = "X:", Left = 10, Top = 25 };
+            txtX1 = new TextBox { Left = 25, Top = 22, Width = 50, Text = "100" };
+            var lblX2 = new Label { Text = "~", Left = 80, Top = 25 };
+            txtX2 = new TextBox { Left = 95, Top = 22, Width = 50, Text = "700" };
+            var lblY = new Label { Text = "Y:", Left = 160, Top = 25 };
+            txtY1 = new TextBox { Left = 175, Top = 22, Width = 50, Text = "100" };
+            var lblY2 = new Label { Text = "~", Left = 230, Top = 25 };
+            txtY2 = new TextBox { Left = 245, Top = 22, Width = 50, Text = "500" };
+            grpRange.Controls.AddRange(new Control[] { lblX, txtX1, lblX2, txtX2, lblY, txtY1, lblY2, txtY2 });
             
-            var grp = new GroupBox { Text = "手動測試(確保遊戲在前台)", Left = 15, Top = 145, Width = 400, Height = 100 };
-            var btnTest1 = new Button { Text = "點擊中央", Left = 10, Top = 30, Width = 80 };
-            btnTest1.Click += (s,e) => { GameClick(400, 300); Log("已點擊中央"); };
-            var btnTest2 = new Button { Text = "點擊左上", Left = 100, Top = 30, Width = 80 };
-            btnTest2.Click += (s,e) => { GameClick(200, 150); Log("已點擊左上"); };
-            var btnTest3 = new Button { Text = "攻擊", Left = 190, Top = 30, Width = 80 };
-            btnTest3.Click += (s,e) => { PressKey(0x41); Log("已發送攻擊"); };
-            var btnTest4 = new Button { Text = "F1", Left = 280, Top = 30, Width = 60 };
-            btnTest4.Click += (s,e) => { PressKey(0x70); Log("F1"); };
+            var grp = new GroupBox { Text = "手動測試", Left = 15, Top = 190, Width = 440, Height = 80 };
+            var btnTest1 = new Button { Text = "點擊隨機位置", Left = 10, Top = 30, Width = 100 };
+            btnTest1.Click += (s,e) => { TestClick(); };
+            var btnTest2 = new Button { Text = "攻擊(A)", Left = 120, Top = 30, Width = 80 };
+            btnTest2.Click += (s,e) => { PressKey(0x41); Log("已按A"); };
+            var btnTest3 = new Button { Text = "F1", Left = 210, Top = 30, Width = 50 };
+            btnTest3.Click += (s,e) => { PressKey(0x70); Log("已按F1"); };
+            var btnTest4 = new Button { Text = "查詢視窗", Left = 270, Top = 30, Width = 80 };
+            btnTest4.Click += (s,e) => { CheckWindow(); };
             grp.Controls.AddRange(new Control[] { btnTest1, btnTest2, btnTest3, btnTest4 });
             
-            var lblLog = new Label { Text = "日誌:", Left = 15, Top = 255 };
-            txtLog = new TextBox { Left = 15, Top = 275, Width = 410, Height = 160, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
+            var lblInfo = new Label { Text = "使用說明: 1.開遊戲 2.自動檢測 3.點擊遊戲激活 4.啟動", Left = 15, Top = 280, Width = 440, ForeColor = System.Drawing.Color.Gray, Font = new System.Drawing.Font("", 8) };
+            
+            var lblLog = new Label { Text = "日誌:", Left = 15, Top = 300 };
+            txtLog = new TextBox { Left = 15, Top = 320, Width = 440, Height = 180, Multiline = true, ScrollBars = ScrollBars.Vertical, ReadOnly = true };
             txtLog.Font = new System.Drawing.Font("Consolas", 9);
             
-            this.Controls.AddRange(new Control[] { lbl1, txtProcess, btnAutoDetect, btnAttach, lblStatus, btnStart, btnStop, btnPause, lblInfo, grp, lblLog, txtLog });
+            this.Controls.AddRange(new Control[] { lbl1, txtProcess, btnAutoDetect, btnAttach, lblStatus, btnStart, btnStop, btnPause, grpRange, grp, lblInfo, lblLog, txtLog });
             
-            Log("=== 天堂輔助程式 v1.5 ===");
-            Log("1. 開啟天堂遊戲");
-            Log("2. 點擊「自動檢測」");
-            Log("3. 點擊遊戲視窗激活(非常重要!)");
-            Log("4. 點擊「啟動」");
+            Log("=== 天堂輔助程式 v1.6 ===");
+            Log("請告訴我遊戲視窗標題");
+        }
+        
+        void CheckWindow()
+        {
+            // 列出所有視窗
+            Log("=== 偵測中的視窗 ===");
+            Process[] procs = Process.GetProcesses();
+            foreach (Process p in procs)
+            {
+                try {
+                    if (!string.IsNullOrEmpty(p.MainWindowTitle) && p.MainWindowTitle.Length > 0)
+                    {
+                        if (p.MainWindowTitle.Contains("天堂") || p.MainWindowTitle.Contains("Lineage") || p.MainWindowTitle.Contains("Purple") || p.MainWindowTitle.Contains("遊戲"))
+                        {
+                            Log("找到: " + p.MainWindowTitle + " (" + p.ProcessName + ")");
+                        }
+                    }
+                } catch {}
+            }
+            Log("====================");
+        }
+        
+        void TestClick()
+        {
+            int x1 = int.Parse(txtX1.Text);
+            int x2 = int.Parse(txtX2.Text);
+            int y1 = int.Parse(txtY1.Text);
+            int y2 = int.Parse(txtY2.Text);
+            
+            int x = rand.Next(x1, x2);
+            int y = rand.Next(y1, y2);
+            
+            GameClick(x, y);
+            Log("測試點擊: (" + x + ", " + y + ")");
         }
         
         void PressKey(byte vk)
@@ -94,19 +137,34 @@ namespace LineageHelper
         {
             Log("正在搜尋遊戲視窗...");
             
-            string[] titles = { "天堂", "Lineage", "Purple", "天堂經典版", "天堂 經典版" };
+            // 先列出所有相關視窗
+            Process[] procs = Process.GetProcesses();
+            foreach (Process p in procs)
+            {
+                try {
+                    string title = p.MainWindowTitle;
+                    if (!string.IsNullOrEmpty(title))
+                    {
+                        Log("發現: " + title);
+                    }
+                } catch {}
+            }
+            
+            // 嘗試常見標題
+            string[] titles = { "天堂", "Lineage", "Purple", "天堂經典版", "天堂 經典版", "NCSOFT" };
             
             foreach (string title in titles)
             {
                 gameWindowHandle = FindWindow(null, title);
                 if (gameWindowHandle != IntPtr.Zero)
                 {
+                    txtProcess.Text = title;
                     Log("✓ 找到視窗: " + title);
                     RECT rect;
                     GetWindowRect(gameWindowHandle, out rect);
-                    int width = rect.Right - rect.Left;
-                    int height = rect.Bottom - rect.Top;
-                    Log("  視窗大小: " + width + "x" + height);
+                    winWidth = rect.Right - rect.Left;
+                    winHeight = rect.Bottom - rect.Top;
+                    Log("  視窗大小: " + winWidth + "x" + winHeight);
                     isAttached = true;
                     lblStatus.Text = "狀態: 已找到視窗";
                     lblStatus.ForeColor = System.Drawing.Color.Green;
@@ -114,22 +172,34 @@ namespace LineageHelper
                 }
             }
             
-            string[] classes = { "LineageWindow", "GWndClass", "#32770" };
-            foreach (string cls in classes)
+            // 用程序名稱找
+            string[] names = { "Purple", "Lineage", "LineageClassic" };
+            foreach (string name in names)
             {
-                gameWindowHandle = FindWindow(cls, null);
-                if (gameWindowHandle != IntPtr.Zero)
-                {
-                    Log("✓ 找到視窗(class): " + cls);
-                    isAttached = true;
-                    lblStatus.Text = "狀態: 已找到視窗";
-                    lblStatus.ForeColor = System.Drawing.Color.Green;
-                    return;
-                }
+                try {
+                    Process[] ps = Process.GetProcessesByName(name);
+                    if (ps.Length > 0)
+                    {
+                        gameWindowHandle = ps[0].MainWindowHandle;
+                        if (gameWindowHandle != IntPtr.Zero)
+                        {
+                            txtProcess.Text = name;
+                            RECT rect;
+                            GetWindowRect(gameWindowHandle, out rect);
+                            winWidth = rect.Right - rect.Left;
+                            winHeight = rect.Bottom - rect.Top;
+                            Log("✓ 找到程序: " + name + " (" + winWidth + "x" + winHeight + ")");
+                            isAttached = true;
+                            lblStatus.Text = "狀態: 已找到視窗";
+                            lblStatus.ForeColor = System.Drawing.Color.Green;
+                            return;
+                        }
+                    }
+                } catch {}
             }
             
             Log("✗ 未找到遊戲視窗");
-            MessageBox.Show("請手動輸入視窗標題，或確認遊戲已打開", "提示");
+            MessageBox.Show("請告訴我你的遊戲視窗標題是什麼？", "提示");
         }
         
         void BtnAttach_Click(object sender, EventArgs e)
@@ -144,14 +214,28 @@ namespace LineageHelper
             gameWindowHandle = FindWindow(null, title);
             if (gameWindowHandle == IntPtr.Zero)
             {
+                // 嘗試用程序名稱
+                try {
+                    Process[] ps = Process.GetProcessesByName(title);
+                    if (ps.Length > 0) gameWindowHandle = ps[0].MainWindowHandle;
+                } catch {}
+            }
+            
+            if (gameWindowHandle == IntPtr.Zero)
+            {
                 MessageBox.Show("找不到視窗: " + title);
                 return;
             }
             
+            RECT rect;
+            GetWindowRect(gameWindowHandle, out rect);
+            winWidth = rect.Right - rect.Left;
+            winHeight = rect.Bottom - rect.Top;
+            
             isAttached = true;
-            lblStatus.Text = "狀態: 已附加";
+            lblStatus.Text = "狀態: 已附加 (" + winWidth + "x" + winHeight + ")";
             lblStatus.ForeColor = System.Drawing.Color.Green;
-            Log("已附加到: " + title);
+            Log("已附加: " + title + " 大小: " + winWidth + "x" + winHeight);
         }
         
         void BtnStart_Click(object sender, EventArgs e)
@@ -163,7 +247,7 @@ namespace LineageHelper
             lblStatus.Text = "狀態: 運行中";
             lblStatus.ForeColor = System.Drawing.Color.Green;
             Log(">>> 機器人啟動 <<<");
-            Log("提示: 確保遊戲視窗在前台!");
+            Log("請確保遊戲視窗在前台!");
             
             botThread = new Thread(BotLoop);
             botThread.IsBackground = true;
@@ -174,12 +258,14 @@ namespace LineageHelper
         {
             if (gameWindowHandle == IntPtr.Zero) return;
             
+            // 激活視窗
             SetForegroundWindow(gameWindowHandle);
-            Thread.Sleep(100);
+            Thread.Sleep(150);
             
+            // 發送點擊
             IntPtr lParam = (IntPtr)((y << 16) | (x & 0xFFFF));
             SendMessage(gameWindowHandle, WM_LBUTTONDOWN, IntPtr.Zero, lParam);
-            Thread.Sleep(rand.Next(50, 150));
+            Thread.Sleep(rand.Next(80, 200));
             SendMessage(gameWindowHandle, WM_LBUTTONUP, IntPtr.Zero, lParam);
         }
         
@@ -194,6 +280,7 @@ namespace LineageHelper
                     
                     cycle++;
                     
+                    // 保持遊戲在前台
                     IntPtr current = GetForegroundWindow();
                     if (current != gameWindowHandle)
                     {
@@ -201,24 +288,33 @@ namespace LineageHelper
                         Thread.Sleep(200);
                     }
                     
-                    int delay = rand.Next(1000, 3000);
+                    // 隨機延遲
+                    int delay = rand.Next(800, 2000);
                     Thread.Sleep(delay);
                     
-                    if (cycle % 3 == 0)
+                    if (cycle % 2 == 0)
                     {
-                        int clickX = rand.Next(200, 600);
-                        int clickY = rand.Next(150, 450);
+                        // 點擊移動
+                        int x1 = int.Parse(txtX1.Text);
+                        int x2 = int.Parse(txtX2.Text);
+                        int y1 = int.Parse(txtY1.Text);
+                        int y2 = int.Parse(txtY2.Text);
+                        
+                        int clickX = rand.Next(x1, x2);
+                        int clickY = rand.Next(y1, y2);
+                        
                         this.Invoke(new Action(() => {
                             GameClick(clickX, clickY);
                             Log("↗ 移動 (" + clickX + "," + clickY + ")");
                         }));
                     }
                     
-                    if (cycle % 10 == 0)
+                    if (cycle % 8 == 0)
                     {
+                        // 攻擊
                         this.Invoke(new Action(() => {
                             PressKey(0x41);
-                            Log("⚔ 攻擊");
+                            Log("⚔ 攻擊(A)");
                         }));
                     }
                     
